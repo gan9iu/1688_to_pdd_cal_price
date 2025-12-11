@@ -61,6 +61,8 @@ class CrawlerService:
                     url=raw_data["url"],
                     title=raw_data.get("product_title_main", ""),
                     shipping_cost=float(raw_data.get("shipping", 0.0)),
+                    category=raw_data.get("category", "未知"),
+                    specs=raw_data.get("specs", ""),
                     fallback_data=raw_data # 保留原始数据以备不时之需
                 )
                 

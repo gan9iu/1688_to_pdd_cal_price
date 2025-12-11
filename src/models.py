@@ -37,6 +37,8 @@ class Product:
     title: str = ""
     shipping_text: str = ""
     shipping_cost: float = 0.0
+    category: str = "未知"          # 新增：类目
+    specs: str = ""                # 新增：1688规格
     skus: List[SKU] = field(default_factory=list)
     
     # 备用字段，用于存储未解析到 SKU 时的通用信息

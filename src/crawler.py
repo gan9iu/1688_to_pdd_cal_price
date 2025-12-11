@@ -61,6 +61,18 @@ COMMON_SELECTORS = {
         "css:span.price",
         "css:.item-price-stock",
         "css:.discount-price .value"
+    ],
+    "category": [
+        "css:.header-breadcrumb",
+        "css:.breadcrumb", 
+        "css:#box-str-breadcrumb",
+        "css:.region-header-breadcrumb"
+    ],
+    "specs": [
+        "css:.mod-detail-attributes",
+        "css:.obj-content", 
+        "css:.de-description-detail",
+        "css:.offer-attr-list"
     ]
 }
 
@@ -140,6 +152,38 @@ def _fetch_shipping(driver: webdriver.Firefox) -> Tuple[float, str]:
         except Exception:
             continue
     return 0.0, ""
+
+
+def _fetch_category(driver: webdriver.Firefox) -> str:
+    """尝试抓取商品类目。"""
+    for sel in COMMON_SELECTORS["category"]:
+        try:
+            by, expr = _parse_selector(sel)
+            el = driver.find_element(by, expr)
+            text = el.get_attribute('textContent').strip()
+            # 清理换行和多余空格
+            text = re.sub(r'\s+', ' ', text)
+            if text:
+                return text
+        except Exception:
+            continue
+    return "未知"
+
+
+def _fetch_specs(driver: webdriver.Firefox) -> str:
+    """尝试抓取商品规格属性。"""
+    for sel in COMMON_SELECTORS["specs"]:
+        try:
+            by, expr = _parse_selector(sel)
+            el = driver.find_element(by, expr)
+            text = el.get_attribute('textContent').strip()
+            # 清理换行和多余空格
+            text = re.sub(r'\s+', ' ', text)
+            if text:
+                return text
+        except Exception:
+            continue
+    return ""
 
 
 def _fetch_skus_by_schema(driver: webdriver.Firefox) -> List[Dict[str, Any]]:
@@ -393,7 +437,11 @@ def fetch_item(
         # 2. 抓取运费
         shipping_price, shipping_text = _fetch_shipping(driver)
 
-        # 3. 抓取 SKU (优先 Schema，失败则兜底)
+        # 3. 抓取类目和规格 (新增)
+        category = _fetch_category(driver)
+        specs = _fetch_specs(driver)
+
+        # 4. 抓取 SKU (优先 Schema，失败则兜底)
         skus = _fetch_skus_by_schema(driver)
         if not skus:
             print(f"[{datetime.now()}] Info: No schema matched, trying fallback for {url}")
@@ -404,6 +452,8 @@ def fetch_item(
             "product_title_main": title,
             "shipping": shipping_price,
             "shipping_text": shipping_text,
+            "category": category,      # 新增
+            "specs": specs,            # 新增
             "skus": skus
         }
 

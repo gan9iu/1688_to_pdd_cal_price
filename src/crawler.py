@@ -531,6 +531,12 @@ def create_driver(
 
     driver = webdriver.Firefox(service=service, options=firefox_opts)
     
+    # [优化] 无论是否无头，都强制设置大窗口，防止触发移动端布局或风控
+    try:
+        driver.set_window_size(1920, 1080)
+    except Exception:
+        pass
+        
     # JS 注入隐藏特征
     driver.execute_script("""
         Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
@@ -575,7 +581,16 @@ def fetch_item(
                     break
             
             if not title:
-                raise RuntimeError(f"抓取失败：超时未获取到标题，URL: {url}")
+                # 抓取失败时的详细诊断
+                curr_title = driver.title
+                page_len = len(driver.page_source)
+                raise RuntimeError(
+                    f"抓取失败：超时未获取到标题。\n"
+                    f"当前URL: {driver.current_url}\n"
+                    f"当前页面Title: {curr_title}\n"
+                    f"页面源码长度: {page_len}\n"
+                    f"提示：如果页面Title显示为'登录'或'验证'，请配置 cookie 或检查网络。"
+                )
 
         # 2. 抓取运费
         shipping_price, shipping_text = _fetch_shipping(driver)

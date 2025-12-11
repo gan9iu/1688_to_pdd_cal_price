@@ -8,9 +8,10 @@
 *   **多策略定价**:
     *   **默认策略**: 基于成本、目标毛利率、平台费率自动计算售价。
     *   **限时限量策略**: 基于目标到手价、立减券和折扣率反推拼单价。
-*   **双端接口**:
+*   **多端接入**:
     *   **Web UI**: 基于 Streamlit 的可视化界面，操作简单，支持实时预览和 Excel 下载。
     *   **CLI**: 高效的命令行工具，适合批量处理和脚本集成。
+    *   **API Server**: [新增] 专为飞书机器人/外部系统设计的 FastAPI 接口服务，支持“1688规格”和“类目”字段抓取。
 *   **专业导出**: 生成格式化的 Excel 报表，包含商品链接跳转和详细的 SKU 定价信息。
 
 ## 📂 项目结构与文件职责
@@ -19,6 +20,7 @@
 1688_to_pdd_cal_price/
 ├── web_app.py              # [Web入口] Streamlit 应用主程序。负责 UI 展示、参数接收，调用 Service 层处理业务。
 ├── cli_app.py              # [CLI入口] 命令行工具主程序。负责解析命令行参数，调用 Service 层处理业务。
+├── api_server.py           # [★API入口] 新增：飞书专用入口 (FastAPI)，提供 RESTful API 供机器人调用。
 ├── requirements.txt        # [依赖文件] 项目运行所需的 Python 库列表。
 ├── README.md               # [项目文档] 项目说明书。
 ├── urls.txt                # [示例输入] 存放待抓取商品链接的文本文件。
@@ -73,6 +75,18 @@ python cli_app.py --input urls.txt --out result.xlsx
 # 使用限时限量策略
 python cli_app.py --input urls.txt --strategy limited --instant-coupon 5 --discount 0.9
 ```
+
+### 4. 运行 API 服务 (Feishu 集成)
+
+启动 FastAPI 服务，主要用于对接飞书机器人或其他外部系统。
+
+```bash
+python api_server.py
+# 服务默认运行在 http://0.0.0.0:8000
+```
+
+**接口说明**:
+*   `POST /feishu_fetch`: 接收 `{"url": "..."}` JSON，返回抓取的成本、运费、类目和规格信息。
 
 ## 🧮 定价策略说明
 

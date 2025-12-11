@@ -379,7 +379,16 @@ def _fetch_fallback_sku(driver: webdriver.Firefox) -> List[Dict[str, Any]]:
 # ==========================================
 
 def _get_default_firefox_profile() -> Optional[str]:
-    """尝试自动查找默认的 Firefox Profile 路径。"""
+    """
+    尝试获取 Firefox 配置文件路径。
+    优先级: 环境变量 -> Windows 默认路径
+    """
+    # 1. 优先检查环境变量 (服务器部署推荐)
+    env_profile = os.getenv("FIREFOX_PROFILE_PATH")
+    if env_profile and os.path.exists(env_profile):
+        return env_profile
+
+    # 2. 尝试自动查找 Windows 默认路径
     try:
         app_data = os.getenv('APPDATA')
         if not app_data:
@@ -396,7 +405,6 @@ def _get_default_firefox_profile() -> Optional[str]:
             lines = f.readlines()
             
         is_release = False
-        path_str = None
         
         for line in lines:
             line = line.strip()
@@ -429,30 +437,66 @@ def create_driver(
     
     firefox_opts = webdriver.FirefoxOptions()
     
-    # 加载用户配置模式
+    # --- Profile 加载逻辑 ---
+    
+    # 哪怕 headless 也可以加载 profile，不一定强制 headless=False
+    # 但如果为了利用本地登录态，通常建议有头模式调试
+    
     if use_firefox_profile:
-        headless = False # 强制有头
+        # 我们可以允许 headless 模式也加载配置，这在服务器上很有用
+        # headless = False  <-- 删掉这一行强制
+        
         profile_path = _get_default_firefox_profile()
         if profile_path and os.path.exists(profile_path):
             print(f"[Info] 正在加载 Firefox 配置文件: {profile_path}")
-            # 方法 A: 使用 -profile 参数 (推荐，更稳定)
             firefox_opts.add_argument("-profile")
             firefox_opts.add_argument(profile_path)
         else:
-            print("[Warning] 未找到默认 Firefox 配置文件，将使用临时配置。")
+            print("[Warning] 未找到 Firefox 配置文件，将使用临时配置。")
+    
+    # --- 强力“静音”配置 (防止弹窗) ---
+    # 无论是否加载 profile，都注入这些首选项以屏蔽干扰
+    prefs = {
+        "browser.startup.homepage": "about:blank",
+        "startup.homepage_welcome_url": "about:blank",
+        "startup.homepage_welcome_url.additional": "",
+        "browser.startup.page": 0,
+        "browser.shell.checkDefaultBrowser": False, # 别问我是不是默认浏览器
+        "browser.tabs.warnOnClose": False,
+        "browser.rights.3.shown": True, # 别弹“您的权利”
+        "datareporting.healthreport.uploadEnabled": False,
+        "toolkit.telemetry.enabled": False,
+        "intl.accept_languages": "zh-CN,zh;q=0.9,en;q=0.8", # 伪装中文环境
+    }
+    for k, v in prefs.items():
+        firefox_opts.set_preference(k, v)
 
     if headless:
         firefox_opts.add_argument("--headless")
+        # [优化] 针对 2G 内存服务器的极限优化
+        firefox_opts.add_argument("--no-sandbox")
+        firefox_opts.add_argument("--disable-dev-shm-usage")
+        firefox_opts.add_argument("--disable-gpu")
+        # 限制页面加载策略为 eager (HTML加载完就认为OK，不等所有图片资源，大幅省内存)
+        firefox_opts.page_load_strategy = 'eager'
 
     # 尝试查找默认安装路径，如果找不到则不设置（让 Selenium 自己找）
-    default_binary_paths = [
-        r"C:\Program Files\Mozilla Firefox\firefox.exe",
-        r"D:\Program Files\Mozilla Firefox\firefox.exe",
-    ]
-    for path in default_binary_paths:
-        if os.path.exists(path):
-            firefox_opts.binary_location = path
-            break
+    # 优先读取环境变量 FIREFOX_BIN
+    binary_path = os.getenv("FIREFOX_BIN")
+    if not binary_path:
+        # 如果没有环境变量，尝试寻找常见的 Windows 安装路径作为兜底
+        possible_paths = [
+            r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+            r"D:\Program Files\Mozilla Firefox\firefox.exe",
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                binary_path = path
+                break
+    
+    if binary_path and os.path.exists(binary_path):
+        firefox_opts.binary_location = binary_path
 
     # 反爬虫配置
     firefox_opts.set_preference("dom.webdriver.enabled", False)
@@ -463,24 +507,27 @@ def create_driver(
     )
 
     # 驱动服务配置
-    user_specified_driver = r"D:\jzc_work\src\geckodriver.exe"
-    
+    service = None
+
+    # 1. 优先使用传入的路径
     if driver_path and os.path.exists(driver_path):
         service = Service(driver_path)
-    elif os.path.exists(user_specified_driver):
-        # [Fix] 优先使用用户指定的本地驱动
-        print(f"[Info] 使用本地 Geckodriver: {user_specified_driver}")
-        service = Service(user_specified_driver)
     else:
-        # 自动安装/查找驱动
-        # [Fix] 增加异常处理，防止 GitHub API Rate Limit 导致无法启动
-        try:
-            exe_path = GeckoDriverManager().install()
-            service = Service(exe_path)
-        except Exception as e:
-            print(f"[Warning] 自动下载驱动失败 (可能是网络或API限制): {e}")
-            print("[Info] 尝试直接使用系统 PATH 中的 'geckodriver'...")
-            service = Service("geckodriver")
+        # 2. 尝试从环境变量获取驱动路径
+        env_driver = os.getenv("GECKODRIVER_PATH")
+        if env_driver and os.path.exists(env_driver):
+             service = Service(env_driver)
+        # 3. 自动安装/查找驱动
+        else:
+            try:
+                # 尝试自动管理 (会下载到用户目录的 .wdm 下，Linux下也兼容)
+                exe_path = GeckoDriverManager().install()
+                service = Service(exe_path)
+            except Exception as e:
+                print(f"[Warning] 自动下载驱动失败: {e}")
+                print("[Info] 尝试直接使用系统 PATH 中的 'geckodriver'...")
+                # 只要 geckodriver 在系统 PATH 里 (如 /usr/bin/), 这样写就行
+                service = Service("geckodriver")
 
     driver = webdriver.Firefox(service=service, options=firefox_opts)
     

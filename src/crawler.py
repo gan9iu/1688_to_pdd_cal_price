@@ -480,17 +480,9 @@ def create_driver(
         # 限制页面加载策略为 eager (HTML加载完就认为OK，不等所有图片资源，大幅省内存)
         firefox_opts.page_load_strategy = 'eager'
 
-        # [服务器端专用] 极速模式：禁止图片加载以节省带宽和内存
-        # 2 = 禁止加载图片
-        firefox_opts.set_preference("permissions.default.image", 2)
-        # 禁止 Flash 等插件
-        firefox_opts.set_preference("plugin.state.flash", 0)
-        # 限制缓存
-        firefox_opts.set_preference("browser.cache.disk.enable", False)
-        firefox_opts.set_preference("browser.cache.memory.enable", False)
-        firefox_opts.set_preference("browser.cache.offline.enable", False)
-        firefox_opts.set_preference("network.http.use-cache", False)
-
+        # [回退] 暂时先开启图片，防止因缺失资源指纹触发风控
+        # firefox_opts.set_preference("permissions.default.image", 2)
+        
     # 尝试查找默认安装路径，如果找不到则不设置（让 Selenium 自己找）
     # 优先读取环境变量 FIREFOX_BIN
     binary_path = os.getenv("FIREFOX_BIN")
@@ -559,13 +551,21 @@ def create_driver(
 
 def _load_cookies(driver: webdriver.Firefox):
     """尝试加载并注入 cookies.json"""
-    cookie_file = "cookies.json"
+    # [优化] 使用绝对路径查找，确保在任何启动方式下都能找到
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # 获取项目根目录
+    cookie_file = os.path.join(base_dir, "cookies.json")
+    
     if not os.path.exists(cookie_file):
-        return
+        print(f"[Warning] 未找到 Cookie 文件: {cookie_file}，尝试寻找当前目录...")
+        cookie_file = "cookies.json"
+        if not os.path.exists(cookie_file):
+             return
 
     try:
         with open(cookie_file, "r", encoding="utf-8") as f:
             cookies = json.load(f)
+        
+        print(f"[Info] 找到 Cookie 文件，尝试注入 {len(cookies)} 个 Cookie...")
         
         # 必须先访问一次目标域名，才能注入 Cookie
         # 访问一个轻量级页面以减少加载时间

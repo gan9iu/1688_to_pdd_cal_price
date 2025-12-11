@@ -61,18 +61,17 @@ COMMON_SELECTORS = {
         "css:span.price",
         "css:.item-price-stock",
         "css:.discount-price .value"
+        "css:.discount-price .value"
     ],
-    "category": [
-        "css:.header-breadcrumb",
-        "css:.breadcrumb", 
-        "css:#box-str-breadcrumb",
-        "css:.region-header-breadcrumb"
+    "attributes_table": [
+        "css:#productAttributes table",  # 新增：针对 id="productAttributes" 的最强匹配
+        "css:.od-collapse-module[data-spm-anchor-id*='productAttributes'] table",
+        "css:div[data-spm-anchor-id*='productAttributes'] table",
+        "css:.ant-descriptions-view table",
     ],
-    "specs": [
-        "css:.mod-detail-attributes",
-        "css:.obj-content", 
-        "css:.de-description-detail",
-        "css:.offer-attr-list"
+    "packaging_table": [
+        "css:#productPackInfo table",
+        "css:[data-module='od_product_pack_info'] table"
     ]
 }
 
@@ -170,20 +169,117 @@ def _fetch_category(driver: webdriver.Firefox) -> str:
     return "未知"
 
 
-def _fetch_specs(driver: webdriver.Firefox) -> str:
-    """尝试抓取商品规格属性。"""
-    for sel in COMMON_SELECTORS["specs"]:
+def _fetch_table_as_dict(driver: webdriver.Firefox, selectors: List[str]) -> Dict[str, str]:
+    """通用：抓取指定选择器的表格数据并转为字典。"""
+    attrs = {}
+    for sel in selectors:
         try:
             by, expr = _parse_selector(sel)
-            el = driver.find_element(by, expr)
-            text = el.get_attribute('textContent').strip()
-            # 清理换行和多余空格
-            text = re.sub(r'\s+', ' ', text)
-            if text:
-                return text
+            table = driver.find_element(by, expr)
+            
+            # 模式A: Ant Design Description (tr -> th, td)
+            # 适用于"商品属性"
+            rows = table.find_elements(By.CSS_SELECTOR, "tr")
+            if not rows: continue
+
+            # 预检：是否有 thead (适用于"包装信息")
+            headers = table.find_elements(By.CSS_SELECTOR, "thead th")
+            if headers:
+                # 模式B: 标准表格 (thead -> th, tbody -> tr -> td)
+                col_names = [h.get_attribute('textContent').strip() for h in headers]
+                body_rows = table.find_elements(By.CSS_SELECTOR, "tbody tr")
+                if body_rows:
+                    first_row_tds = body_rows[0].find_elements(By.CSS_SELECTOR, "td")
+                    for i, td in enumerate(first_row_tds):
+                        if i < len(col_names):
+                            key = col_names[i]
+                            val = td.get_attribute('textContent').strip()
+                            if key and val and key not in attrs:
+                                attrs[key] = val
+            else:
+                 # 模式A: 属性键值对表格
+                for row in rows:
+                    ths = row.find_elements(By.CSS_SELECTOR, "th")
+                    tds = row.find_elements(By.CSS_SELECTOR, "td")
+                    limit = min(len(ths), len(tds))
+                    for i in range(limit):
+                        if i < len(ths) and i < len(tds):
+                            key = ths[i].get_attribute('textContent').strip()
+                            val = tds[i].get_attribute('textContent').strip()
+                            if key and val:
+                                attrs[key] = val
+            if attrs:
+                return attrs
         except Exception:
             continue
-    return ""
+    return attrs
+
+
+def _fetch_all_rows_as_text(driver: webdriver.Firefox, selectors: List[str]) -> str:
+    """
+    抓取表格的所有行数据，返回格式化的长字符串。
+    格式: [行1属性1:值1, 行1属性2:值2]; [行2属性1:值1, ...]; ...
+    """
+    result_lines = []
+    
+    for sel in selectors:
+        try:
+            by, expr = _parse_selector(sel)
+            table = driver.find_element(by, expr)
+            
+            # --- 模式解析 ---
+            
+            # 模式B: 标准表格 (thead -> th, tbody -> tr -> td) 
+            # 这种通常见于 "包装信息"，我们需要抓取所有行
+            headers = table.find_elements(By.CSS_SELECTOR, "thead th")
+            if headers:
+                col_names = [h.get_attribute('textContent').strip() for h in headers]
+                body_rows = table.find_elements(By.CSS_SELECTOR, "tbody tr")
+                
+                for row_idx, row in enumerate(body_rows):
+                    tds = row.find_elements(By.CSS_SELECTOR, "td")
+                    row_data = []
+                    limit = min(len(col_names), len(tds))
+                    
+                    for i in range(limit):
+                        key = col_names[i]
+                        val = tds[i].get_attribute('textContent').strip()
+                        if key and val:
+                             # 清理空格
+                            val = re.sub(r'\s+', ' ', val)
+                            row_data.append(f"{key}:{val}")
+                            
+                    if row_data:
+                        result_lines.append(f"[{'; '.join(row_data)}]")
+                
+                if result_lines:
+                    return " | ".join(result_lines)
+            
+            # 模式A: 键值对表格 (tr -> th, td) 
+            # 通常不需要"所有行"模式，因为它本身就是平铺的，保持原来的字典逻辑即可，
+            # 这里如果不小心匹配到了(概率极低)，暂且返回空
+            
+        except Exception:
+            continue
+            
+    return ""  
+
+
+def _fetch_specs(driver: webdriver.Firefox) -> str:
+    """抓取商品属性 (对应第一个HTML片段)"""
+    # 属性通常是 Key-Value 平铺的，用原来的逻辑
+    attrs = _fetch_table_as_dict(driver, COMMON_SELECTORS["attributes_table"])
+    specs_list = []
+    for k, v in attrs.items():
+        c_v = re.sub(r'\s+', ' ', v)
+        specs_list.append(f"{k}:{c_v}")
+    return "; ".join(specs_list)
+
+
+def _fetch_packaging(driver: webdriver.Firefox) -> str:
+    """抓取包装信息 (对应第二个HTML片段) - 返回所有行"""
+    # 使用全量抓取函数
+    return _fetch_all_rows_as_text(driver, COMMON_SELECTORS["packaging_table"])
 
 
 def _fetch_skus_by_schema(driver: webdriver.Firefox) -> List[Dict[str, Any]]:
@@ -437,9 +533,10 @@ def fetch_item(
         # 2. 抓取运费
         shipping_price, shipping_text = _fetch_shipping(driver)
 
-        # 3. 抓取类目和规格 (新增)
+        # 3. 抓取类目、属性、包装 (分离抓取)
         category = _fetch_category(driver)
         specs = _fetch_specs(driver)
+        packaging = _fetch_packaging(driver)
 
         # 4. 抓取 SKU (优先 Schema，失败则兜底)
         skus = _fetch_skus_by_schema(driver)
@@ -452,8 +549,9 @@ def fetch_item(
             "product_title_main": title,
             "shipping": shipping_price,
             "shipping_text": shipping_text,
-            "category": category,      # 新增
-            "specs": specs,            # 新增
+            "category": category,
+            "specs": specs,
+            "packaging": packaging,    # 分离的包装信息
             "skus": skus
         }
 

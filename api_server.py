@@ -36,7 +36,8 @@ def feishu_fetch(req: FetchRequest):
                 "采购成本": cost,  # 从 SKU 提取
                 "预估运费": data.get("shipping", 0.0),
                 "类目": data.get("category", "未知"),  # 新增字段
-                "1688规格": data.get("specs", "")      # 新增字段
+                "1688规格": data.get("specs", ""),      # 只含商品属性
+                "包装信息": data.get("packaging", "")    # 含包装重量等
             }
         }
     finally:

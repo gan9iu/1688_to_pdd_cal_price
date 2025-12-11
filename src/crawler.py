@@ -480,6 +480,17 @@ def create_driver(
         # 限制页面加载策略为 eager (HTML加载完就认为OK，不等所有图片资源，大幅省内存)
         firefox_opts.page_load_strategy = 'eager'
 
+        # [服务器端专用] 极速模式：禁止图片加载以节省带宽和内存
+        # 2 = 禁止加载图片
+        firefox_opts.set_preference("permissions.default.image", 2)
+        # 禁止 Flash 等插件
+        firefox_opts.set_preference("plugin.state.flash", 0)
+        # 限制缓存
+        firefox_opts.set_preference("browser.cache.disk.enable", False)
+        firefox_opts.set_preference("browser.cache.memory.enable", False)
+        firefox_opts.set_preference("browser.cache.offline.enable", False)
+        firefox_opts.set_preference("network.http.use-cache", False)
+
     # 尝试查找默认安装路径，如果找不到则不设置（让 Selenium 自己找）
     # 优先读取环境变量 FIREFOX_BIN
     binary_path = os.getenv("FIREFOX_BIN")
@@ -545,6 +556,36 @@ def create_driver(
     return driver
 
 
+
+def _load_cookies(driver: webdriver.Firefox):
+    """尝试加载并注入 cookies.json"""
+    cookie_file = "cookies.json"
+    if not os.path.exists(cookie_file):
+        return
+
+    try:
+        with open(cookie_file, "r", encoding="utf-8") as f:
+            cookies = json.load(f)
+        
+        # 必须先访问一次目标域名，才能注入 Cookie
+        # 访问一个轻量级页面以减少加载时间
+        if "1688.com" not in driver.current_url:
+            driver.get("https://www.1688.com/robots.txt")
+        
+        for cookie in cookies:
+            # Selenium 对 cookie 字段很挑剔，去掉多余字段
+            valid_keys = {'name', 'value', 'domain', 'path', 'expiry', 'secure', 'httpOnly', 'sameSite'}
+            cookie_dict = {k: v for k, v in cookie.items() if k in valid_keys}
+            try:
+                driver.add_cookie(cookie_dict)
+            except Exception:
+                # 忽略某些无法添加的脏 cookie
+                pass
+        print(f"[Info] 已注入 {len(cookies)} 个 Cookie")
+    except Exception as e:
+        print(f"[Warning] 加载 Cookie 失败: {e}")
+
+
 def fetch_item(
     url: str, 
     driver: Optional[webdriver.Firefox] = None, 
@@ -559,6 +600,9 @@ def fetch_item(
         own_driver = True
 
     try:
+        # [关键] 在访问具体商品前，先注入 Cookie
+        _load_cookies(driver)
+
         driver.get(url)
         # 检查是否跳转到了登录页
         current_url = driver.current_url
